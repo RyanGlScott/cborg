@@ -50,6 +50,7 @@ module Codec.CBOR.Encoding
   , encodeFloat              -- :: Float -> Encoding
   , encodeDouble             -- :: Double -> Encoding
   , encodePreEncoded         -- :: B.ByteString -> Encoding
+  , encodePreEncodedLazy     -- :: LB.ByteString -> Encoding
   ) where
 
 #include "cbor.h"
@@ -58,8 +59,9 @@ import           Data.Int
 import           Data.Word
 import           Data.Semigroup
 
-import qualified Data.ByteString as B
-import qualified Data.Text       as T
+import qualified Data.ByteString      as B
+import qualified Data.ByteString.Lazy as LB
+import qualified Data.Text            as T
 
 import           Codec.CBOR.ByteArray.Sliced (SlicedByteArray)
 
@@ -130,6 +132,7 @@ data Tokens =
 
     -- Special
     | TkEncoded  {-# UNPACK #-} !B.ByteString Tokens
+    | TkEncodedLazy            !LB.ByteString Tokens
 
     | TkEnd
     deriving (Show,Eq)
@@ -367,3 +370,19 @@ encodeDouble = Encoding . TkFloat64
 -- @since 0.2.2.0
 encodePreEncoded :: B.ByteString -> Encoding
 encodePreEncoded = Encoding . TkEncoded
+
+-- | Include pre-encoded valid CBOR data into the 'Encoding'. This is like
+-- 'encodePreEncoded', but with a lazy 'LBS.ByteString' instead.
+--
+-- The data is included into the output as-is without any additional wrapper.
+--
+-- This should be used with care. The data /must/ be a valid CBOR encoding, but
+-- this is /not/ checked.
+--
+-- This is useful when you have CBOR data that you know is already valid, e.g.
+-- previously validated and stored on disk, and you wish to include it without
+-- having to decode and re-encode it.
+--
+-- @since next
+encodePreEncodedLazy :: LB.ByteString -> Encoding
+encodePreEncodedLazy = Encoding . TkEncodedLazy

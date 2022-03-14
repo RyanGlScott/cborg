@@ -188,9 +188,12 @@ buildStep vs1 k (BI.BufferRange op0 ope0) =
           TkFloat64  f vs' -> PI.runB doubleMP   f op >>= go vs'
           TkBreak      vs' -> PI.runB breakMP   () op >>= go vs'
 
-          TkEncoded  x vs' -> BI.runBuilderWith
-                                (B.byteString x) (buildStep vs' k)
-                                (BI.BufferRange op ope0)
+          TkEncoded     x vs' -> BI.runBuilderWith
+                                   (B.byteString x) (buildStep vs' k)
+                                   (BI.BufferRange op ope0)
+          TkEncodedLazy x vs' -> BI.runBuilderWith
+                                   (BI.lazyByteString x) (buildStep vs' k)
+                                   (BI.BufferRange op ope0)
 
           TkEnd            -> k (BI.BufferRange op ope0)
 

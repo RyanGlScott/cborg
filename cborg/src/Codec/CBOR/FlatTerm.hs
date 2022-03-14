@@ -67,6 +67,8 @@ import           Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Internal as LBS
 import           Control.Monad.ST
 import qualified Control.Monad.ST.Lazy as ST.Lazy
 
@@ -153,6 +155,8 @@ convFlatTerm (Enc.TkFloat64  f  ts) = TkFloat64   f : convFlatTerm ts
 convFlatTerm (Enc.TkBreak       ts) = TkBreak       : convFlatTerm ts
 convFlatTerm (Enc.TkEncoded  bs ts) = decodePreEncoded bs
                                                    ++ convFlatTerm ts
+convFlatTerm (Enc.TkEncodedLazy bs ts) = decodePreEncodedLazy bs
+                                                   ++ convFlatTerm ts
 convFlatTerm  Enc.TkEnd             = []
 
 --------------------------------------------------------------------------------
@@ -182,6 +186,32 @@ decodePreEncoded bs0 =
                                         >>= collectOutput
     collectOutput (Read.Done bs' _ x) = do xs <- provideInput bs'
                                            return (x : xs)
+
+decodePreEncodedLazy :: LBS.ByteString -> FlatTerm
+decodePreEncodedLazy bs0 =
+    ST.Lazy.runST (provideInput bs0)
+  where
+    provideInput :: LBS.ByteString -> ST.Lazy.ST s FlatTerm
+    provideInput bs
+      | LBS.null bs = return []
+      | otherwise   = do
+          k <- ST.Lazy.strictToLazyST $ Read.deserialiseIncremental decodeTermToken
+          go bs k
+
+    go :: LBS.ByteString
+       -> Read.IDecode s TermToken
+       -> ST.Lazy.ST s FlatTerm
+    go  _                  (Read.Fail _ _ err) = fail $ "toFlatTerm: encodePreEncoded "
+                                                     ++ "used with invalid CBOR: "
+                                                     ++ show err
+    go  lbs'               (Read.Done bs _ x)  = do xs <- if BS.null bs
+                                                          then provideInput lbs'
+                                                          else provideInput (LBS.Chunk bs lbs')
+                                                    return (x : xs)
+    go  LBS.Empty          (Read.Partial  k)   = ST.Lazy.strictToLazyST (k Nothing)
+                                                 >>= go LBS.Empty
+    go (LBS.Chunk bs lbs') (Read.Partial  k)   = ST.Lazy.strictToLazyST (k (Just bs))
+                                                 >>= go lbs'
 
 decodeTermToken :: Decoder s TermToken
 decodeTermToken = do
