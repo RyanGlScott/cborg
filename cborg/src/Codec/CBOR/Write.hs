@@ -4,6 +4,13 @@
 {-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PatternSynonyms     #-}
+
+#include "cbor.h"
+
+#if defined(OPTIMIZE_GMP) && defined(HAVE_GHC_BIGNUM)
+{-# LANGUAGE UnboxedSums         #-}
+#endif
 
 -- |
 -- Module      : Codec.CBOR.Write
@@ -21,8 +28,6 @@ module Codec.CBOR.Write
   , toLazyByteString   -- :: Encoding -> L.ByteString
   , toStrictByteString -- :: Encoding -> S.ByteString
   ) where
-
-#include "cbor.h"
 
 import           Data.Bits
 import           Data.Int
@@ -43,14 +48,27 @@ import qualified Data.ByteString.Builder.Prim.Internal as PI
 import qualified Data.ByteString.Lazy                  as L
 import qualified Data.Text                             as T
 import qualified Data.Text.Encoding                    as T
+#if MIN_VERSION_text(2,0,0)
+import qualified Data.Text.Foreign                     as T
+#endif
 
-#if defined(OPTIMIZE_GMP)
 import           Control.Exception.Base                (assert)
 import           GHC.Exts
+#if defined(OPTIMIZE_GMP)
+#if defined(HAVE_GHC_BIGNUM)
+import           GHC.IO                                (IO(IO))
+import qualified GHC.Num.Integer
+import qualified GHC.Num.BigNat                        as Gmp
+import qualified GHC.Num.BigNat
+import           GHC.Num.BigNat                        (BigNat)
+#else
 import qualified GHC.Integer.GMP.Internals             as Gmp
+import           GHC.Integer.GMP.Internals             (BigNat)
+#endif
+#endif
+
 #if __GLASGOW_HASKELL__ < 710
 import           GHC.Word
-#endif
 #endif
 
 import qualified Codec.CBOR.ByteArray.Sliced           as BAS
@@ -129,9 +147,10 @@ buildStep vs1 k (BI.BufferRange op0 ope0) =
           -- This code is specialized for GMP implementation of Integer. By
           -- looking directly at the constructors we can avoid some checks.
           -- S# hold an Int, so we can just use intMP.
-          TkInteger (Gmp.S# i) vs' -> PI.runB intMP (I# i) op >>= go vs'
-          -- Jp# is guaranteed to be > 0.
-          TkInteger integer@(Gmp.Jp# bigNat) vs'
+          TkInteger (SmallInt i) vs' ->
+               PI.runB intMP (I# i) op >>= go vs'
+          -- PosBigInt is guaranteed to be > 0.
+          TkInteger integer@(PosBigInt bigNat) vs'
             | integer <= fromIntegral (maxBound :: Word64) ->
                 PI.runB word64MP (fromIntegral integer) op >>= go vs'
             | otherwise ->
@@ -139,7 +158,7 @@ buildStep vs1 k (BI.BufferRange op0 ope0) =
                in BI.runBuilderWith
                     (bigNatMP bigNat) (buildStep vs' k) buffer
           -- Jn# is guaranteed to be < 0.
-          TkInteger integer@(Gmp.Jn# bigNat) vs'
+          TkInteger integer@(NegBigInt bigNat) vs'
             | integer >= -1 - fromIntegral (maxBound :: Word64) ->
                 PI.runB negInt64MP (fromIntegral (-1 - integer)) op >>= go vs'
             | otherwise ->
@@ -185,7 +204,6 @@ buildStep vs1 k (BI.BufferRange op0 ope0) =
     -- The maximum size in bytes of the fixed-size encodings
     bound :: Int
     bound = 9
-
 
 header :: P.BoundedPrim Word8
 header = P.liftFixedToBounded P.word8
@@ -409,9 +427,13 @@ bytesBeginMP = constHeader 0x5f
 
 stringMP :: T.Text -> B.Builder
 stringMP t =
+#if MIN_VERSION_text(2,0,0)
+    P.primBounded stringLenMP (fromIntegral $ T.lengthWord8 t) <> T.encodeUtf8Builder t
+#else
     P.primBounded stringLenMP (fromIntegral $ S.length bs) <> B.byteString bs
   where
     bs  = T.encodeUtf8 t
+#endif
 
 stringLenMP :: P.BoundedPrim Word
 stringLenMP =
@@ -584,36 +606,101 @@ breakMP = constHeader 0xff
 -- ---------------------------------------- --
 -- Implementation optimized for integer-gmp --
 -- ---------------------------------------- --
-bigNatMP :: Gmp.BigNat -> B.Builder
-bigNatMP n = P.primBounded header 0xc2 <> bigNatToBuilder n
 
-negBigNatMP :: Gmp.BigNat -> B.Builder
+-- Below is where we try to abstract over the differences between the legacy
+-- integer-gmp interface and ghc-bignum, shipped in GHC >= 9.0.
+
+-- | Write the limbs of a 'BigNat' to the given address in big-endian byte
+-- ordering.
+exportBigNatToAddr :: BigNat -> Addr# -> IO Word
+
+#if defined(HAVE_GHC_BIGNUM)
+
+{-# COMPLETE SmallInt, PosBigInt, NegBigInt #-}
+pattern SmallInt :: Int# -> Integer
+pattern SmallInt  n = GHC.Num.Integer.IS n
+
+pattern PosBigInt, NegBigInt :: GHC.Num.BigNat.BigNat# -> Integer
+pattern PosBigInt n = GHC.Num.Integer.IP n
+pattern NegBigInt n = GHC.Num.Integer.IN n
+
+bigNatSizeInBytes :: GHC.Num.BigNat.BigNat -> Word
+bigNatSizeInBytes bigNat =
+  Gmp.bigNatSizeInBase 256 (GHC.Num.BigNat.unBigNat bigNat)
+
+bigNatMP :: GHC.Num.BigNat.BigNat# -> B.Builder
+bigNatMP n = P.primBounded header 0xc2 <> bigNatToBuilder (GHC.Num.BigNat.BN# n)
+
+negBigNatMP :: GHC.Num.BigNat.BigNat# -> B.Builder
 negBigNatMP n =
   -- If value `n` is stored in CBOR, it is interpreted as -1 - n. Since BigNat
   -- already represents n (note: it's unsigned), we simply decrement it to get
   -- the correct encoding.
      P.primBounded header 0xc3
-  <> bigNatToBuilder (Gmp.minusBigNatWord n (int2Word# 1#))
+  <> bigNatToBuilder (subtractOneBigNat (GHC.Num.BigNat.BN# n))
+  where
+    subtractOneBigNat (GHC.Num.BigNat.BN# nat) =
+      case GHC.Num.BigNat.bigNatSubWord# nat 1## of
+        (#       | r #) -> GHC.Num.BigNat.BN# r
+        (# (# #) | #)   -> error "subtractOneBigNat: impossible"
 
-bigNatToBuilder :: Gmp.BigNat -> B.Builder
+exportBigNatToAddr (GHC.Num.BigNat.BN# b) addr = IO $ \s ->
+  -- The last parameter (`1#`) makes the export function use big endian encoding.
+  case GHC.Num.BigNat.bigNatToAddr# b addr 1# s of
+    (# s', w #) -> (# s', W# w #)
+#else /* HAVE_GHC_BIGNUM */
+
+{-# COMPLETE SmallInt, PosBigInt, NegBigInt #-}
+pattern SmallInt :: Int# -> Integer
+pattern SmallInt  n = Gmp.S# n
+
+pattern PosBigInt :: BigNat -> Integer
+pattern NegBigInt :: BigNat -> Integer
+pattern PosBigInt n = Gmp.Jp# n
+pattern NegBigInt n = Gmp.Jn# n
+
+bigNatSizeInBytes :: BigNat -> Word
+bigNatSizeInBytes bigNat = W# (Gmp.sizeInBaseBigNat bigNat 256#)
+
+bigNatMP :: BigNat -> B.Builder
+bigNatMP n = P.primBounded header 0xc2 <> bigNatToBuilder n
+
+negBigNatMP :: BigNat -> B.Builder
+negBigNatMP n =
+  -- If value `n` is stored in CBOR, it is interpreted as -1 - n. Since BigNat
+  -- already represents n (note: it's unsigned), we simply decrement it to get
+  -- the correct encoding.
+     P.primBounded header 0xc3
+  <> bigNatToBuilder (subtractOneBigNat n)
+  where
+    subtractOneBigNat m = Gmp.minusBigNatWord m (int2Word# 1#)
+
+exportBigNatToAddr bigNat addr# =
+  -- The last parameter (`1#`) makes the export function use big endian encoding.
+  Gmp.exportBigNatToAddr bigNat addr# 1#
+#endif /* HAVE_GHC_BIGNUM */
+
+bigNatToBuilder :: BigNat -> B.Builder
 bigNatToBuilder = bigNatBuilder
   where
-    bigNatBuilder :: Gmp.BigNat -> B.Builder
+    bigNatBuilder :: BigNat -> B.Builder
     bigNatBuilder bigNat =
-        let sizeW# = Gmp.sizeInBaseBigNat bigNat 256#
-            bounded = PI.boudedPrim (I# (word2Int# sizeW#)) (dumpBigNat sizeW#)
-        in P.primBounded bytesLenMP (W# sizeW#) <> P.primBounded bounded bigNat
+        let sizeW = bigNatSizeInBytes bigNat
+#if MIN_VERSION_bytestring(0,10,12)
+            bounded = PI.boundedPrim (fromIntegral sizeW) (dumpBigNat sizeW)
+#else
+            bounded = PI.boudedPrim (fromIntegral sizeW) (dumpBigNat sizeW)
+#endif
+        in P.primBounded bytesLenMP sizeW <> P.primBounded bounded bigNat
 
-    dumpBigNat :: Word# -> Gmp.BigNat -> Ptr a -> IO (Ptr a)
-    dumpBigNat sizeW# bigNat ptr@(Ptr addr#) = do
-        -- The last parameter (`1#`) makes the export function use big endian
-        -- encoding.
-        (W# written#) <- Gmp.exportBigNatToAddr bigNat addr# 1#
+    dumpBigNat :: Word -> BigNat -> Ptr a -> IO (Ptr a)
+    dumpBigNat (W# sizeW#) bigNat ptr@(Ptr addr#) = do
+        (W# written#) <- exportBigNatToAddr bigNat addr#
         let !newPtr = ptr `plusPtr` (I# (word2Int# written#))
             sanity = isTrue# (sizeW# `eqWord#` written#)
         return $ assert sanity newPtr
 
-#else
+#else /* OPTIMIZE_GMP */
 
 -- ---------------------- --
 -- Generic implementation --
@@ -636,4 +723,4 @@ integerToBytes n0
 
     narrow :: Integer -> Word8
     narrow = fromIntegral
-#endif
+#endif /* OPTIMIZE_GMP */

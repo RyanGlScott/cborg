@@ -19,6 +19,10 @@ import           Data.List.NonEmpty ( NonEmpty )
 import qualified Data.Semigroup as Semigroup
 #endif
 
+#if MIN_VERSION_base(4,10,0)
+import qualified Type.Reflection                as Refl
+#endif
+
 import           Data.Char (ord)
 import           Data.Complex
 import           Data.Int
@@ -177,13 +181,18 @@ testTree = testGroup "Serialise class"
       , mkTest (T :: T (Canonical Float))
       , mkTest (T :: T (Canonical Double))
       , mkTest (T :: T [()])
+#if MIN_VERSION_base(4,10,0)
+      , mkTest (T :: T (Refl.SomeTypeRep))
+#endif
 #if MIN_VERSION_base(4,9,0)
       , mkTest (T :: T (NonEmpty ()))
       , mkTest (T :: T (Semigroup.Min ()))
       , mkTest (T :: T (Semigroup.Max ()))
       , mkTest (T :: T (Semigroup.First ()))
       , mkTest (T :: T (Semigroup.Last ()))
+#if !MIN_VERSION_base(4,16,0)
       , mkTest (T :: T (Semigroup.Option ()))
+#endif
       , mkTest (T :: T (Semigroup.WrappedMonoid ()))
 #endif
 #if MIN_VERSION_base(4,7,0)

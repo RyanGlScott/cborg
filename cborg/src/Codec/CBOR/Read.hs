@@ -9,9 +9,14 @@
 {-# LANGUAGE OverloadedStrings      #-}
 {-# LANGUAGE RankNTypes             #-}
 
+#if __GLASGOW_HASKELL__ < 900
 -- Bump up from the default 1.5, otherwise our decoder fast path is no good.
 -- We went over the threshold when we switched to using ST.
+--
+-- However, this flag is not supported on GHC 9.0 and later and eye-balling the
+-- Core suggests that the new inlining heuristics don't require it.
 {-# OPTIONS_GHC -funfolding-keeness-factor=2.0 #-}
+#endif
 
 -- |
 -- Module      : Codec.CBOR.Read
@@ -357,32 +362,32 @@ go_fast !bs da@(ConsumeTag k) =
 go_fast !bs da@(ConsumeWordCanonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (W# w#)
-        | isWordCanonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#)
+        | isWordCanonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
         | otherwise             -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeWord8Canonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (W# w#) ->
+      DecodedToken sz w@(W# w#) ->
         case gtWord# w# 0xff## of
-          0# | isWordCanonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+          0# | isWordCanonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
           _                          -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeWord16Canonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (W# w#) ->
+      DecodedToken sz w@(W# w#) ->
         case gtWord# w# 0xffff## of
-          0# | isWordCanonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+          0# | isWordCanonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
           _                          -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeWord32Canonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (W# w#) ->
+      DecodedToken sz w@(W# w#) ->
         case w_out_of_range w# of
-          0# | isWordCanonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+          0# | isWordCanonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
           _                          -> go_fast_end bs da
   where
     w_out_of_range :: Word# -> Int#
@@ -396,39 +401,39 @@ go_fast !bs da@(ConsumeWord32Canonical k) =
 go_fast !bs da@(ConsumeNegWordCanonical k) =
     case tryConsumeNegWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (W# w#)
-        | isWordCanonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#)
+        | isWordCanonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
         | otherwise             -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeIntCanonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (I# n#)
-        | isIntCanonical sz n# -> k n# >>= go_fast (BS.unsafeDrop sz bs)
+      DecodedToken sz n@(I# n#)
+        | isIntCanonical sz n  -> k n# >>= go_fast (BS.unsafeDrop sz bs)
         | otherwise            -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeInt8Canonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (I# n#) ->
+      DecodedToken sz n@(I# n#) ->
         case (n# ># 0x7f#) `orI#` (n# <# -0x80#) of
-          0# | isIntCanonical sz n# -> k n# >>= go_fast (BS.unsafeDrop sz bs)
+          0# | isIntCanonical sz n  -> k n# >>= go_fast (BS.unsafeDrop sz bs)
           _                         -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeInt16Canonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (I# n#) ->
+      DecodedToken sz n@(I# n#) ->
         case (n# ># 0x7fff#) `orI#` (n# <# -0x8000#) of
-          0# | isIntCanonical sz n# -> k n# >>= go_fast (BS.unsafeDrop sz bs)
+          0# | isIntCanonical sz n  -> k n# >>= go_fast (BS.unsafeDrop sz bs)
           _                         -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeInt32Canonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (I# n#) ->
+      DecodedToken sz n@(I# n#) ->
         case n_out_of_range n# of
-          0# | isIntCanonical sz n# -> k n# >>= go_fast (BS.unsafeDrop sz bs)
+          0# | isIntCanonical sz n  -> k n# >>= go_fast (BS.unsafeDrop sz bs)
           _                         -> go_fast_end bs da
   where
     n_out_of_range :: Int# -> Int#
@@ -442,24 +447,24 @@ go_fast !bs da@(ConsumeInt32Canonical k) =
 go_fast !bs da@(ConsumeListLenCanonical k) =
     case tryConsumeListLen (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (I# n#)
-          -- List length can't be negative, cast it to Word#.
-        | isWordCanonical sz (int2Word# n#) -> k n# >>= go_fast (BS.unsafeDrop sz bs)
+      DecodedToken sz n@(I# n#)
+          -- List length can't be negative, cast it to Word.
+        | isWordCanonical sz (intToWord n)  -> k n# >>= go_fast (BS.unsafeDrop sz bs)
         | otherwise                         -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeMapLenCanonical k) =
     case tryConsumeMapLen (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (I# n#)
-          -- Map length can't be negative, cast it to Word#.
-        | isWordCanonical sz (int2Word# n#) -> k n# >>= go_fast (BS.unsafeDrop sz bs)
-        | otherwise                         -> go_fast_end bs da
+      DecodedToken sz n@(I# n#)
+          -- Map length can't be negative, cast it to Word.
+        | isWordCanonical sz (intToWord n) -> k n# >>= go_fast (BS.unsafeDrop sz bs)
+        | otherwise                        -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeTagCanonical k) =
     case tryConsumeTag (BS.unsafeHead bs) bs of
       DecodeFailure           -> go_fast_end bs da
-      DecodedToken sz (W# w#)
-        | isWordCanonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#)
+        | isWordCanonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
         | otherwise             -> go_fast_end bs da
 
 #if defined(ARCH_32bit)
@@ -496,45 +501,45 @@ go_fast !bs da@(ConsumeTag64 k) =
 go_fast !bs da@(ConsumeWord64Canonical k) =
   case tryConsumeWord64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> go_fast_end bs da
-    DecodedToken sz (W64# w#)
-      | isWord64Canonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+    DecodedToken sz w@(W64# w#)
+      | isWord64Canonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
       | otherwise               -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeNegWord64Canonical k) =
   case tryConsumeNegWord64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> go_fast_end bs da
-    DecodedToken sz (W64# w#)
-      | isWord64Canonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+    DecodedToken sz w@(W64# w#)
+      | isWord64Canonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
       | otherwise               -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeInt64Canonical k) =
   case tryConsumeInt64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> go_fast_end bs da
-    DecodedToken sz (I64# i#)
-      | isInt64Canonical sz i# -> k i# >>= go_fast (BS.unsafeDrop sz bs)
+    DecodedToken sz i@(I64# i#)
+      | isInt64Canonical sz i  -> k i# >>= go_fast (BS.unsafeDrop sz bs)
       | otherwise              -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeListLen64Canonical k) =
   case tryConsumeListLen64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> go_fast_end bs da
-    DecodedToken sz (I64# i#)
+    DecodedToken sz i@(I64# i#)
         -- List length can't be negative, cast it to Word64#.
-      | isWord64Canonical sz (int64ToWord64# i#) -> k i# >>= go_fast (BS.unsafeDrop sz bs)
-      | otherwise                                -> go_fast_end bs da
+      | isWord64Canonical sz (int64ToWord64 i) -> k i# >>= go_fast (BS.unsafeDrop sz bs)
+      | otherwise                              -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeMapLen64Canonical k) =
   case tryConsumeMapLen64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> go_fast_end bs da
-    DecodedToken sz (I64# i#)
+    DecodedToken sz i@(I64# i#)
         -- Map length can't be negative, cast it to Word64#.
-      | isWord64Canonical sz (int64ToWord64# i#) -> k i# >>= go_fast (BS.unsafeDrop sz bs)
-      | otherwise                                -> go_fast_end bs da
+      | isWord64Canonical sz (int64ToWord64 i) -> k i# >>= go_fast (BS.unsafeDrop sz bs)
+      | otherwise                              -> go_fast_end bs da
 
 go_fast !bs da@(ConsumeTag64Canonical k) =
   case tryConsumeTag64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> go_fast_end bs da
-    DecodedToken sz (W64# w#)
-      | isWord64Canonical sz w# -> k w# >>= go_fast (BS.unsafeDrop sz bs)
+    DecodedToken sz w@(W64# w#)
+      | isWord64Canonical sz w  -> k w# >>= go_fast (BS.unsafeDrop sz bs)
       | otherwise               -> go_fast_end bs da
 #endif
 
@@ -843,31 +848,31 @@ go_fast_end !bs (ConsumeTag k) =
 go_fast_end !bs (ConsumeWordCanonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected word"
-      DecodedToken sz (W# w#)
-        | isWordCanonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#)
+        | isWordCanonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
         | otherwise             -> return $! SlowFail bs "non-canonical word"
 
 go_fast_end !bs (ConsumeWord8Canonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected word8"
-      DecodedToken sz (W# w#) -> case gtWord# w# 0xff## of
-          0# | isWordCanonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#) -> case gtWord# w# 0xff## of
+          0# | isWordCanonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
              | otherwise             -> return $! SlowFail bs "non-canonical word8"
           _                          -> return $! SlowFail bs "expected word8"
 
 go_fast_end !bs (ConsumeWord16Canonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected word16"
-      DecodedToken sz (W# w#) -> case gtWord# w# 0xffff## of
-        0# | isWordCanonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#) -> case gtWord# w# 0xffff## of
+        0# | isWordCanonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
            | otherwise             -> return $! SlowFail bs "non-canonical word16"
         _                          -> return $! SlowFail bs "expected word16"
 
 go_fast_end !bs (ConsumeWord32Canonical k) =
     case tryConsumeWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected word32"
-      DecodedToken sz (W# w#) -> case w_out_of_range w# of
-        0# | isWordCanonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#) -> case w_out_of_range w# of
+        0# | isWordCanonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
            | otherwise             -> return $! SlowFail bs "non-canonical word32"
         _                          -> return $! SlowFail bs "expected word32"
   where
@@ -882,41 +887,41 @@ go_fast_end !bs (ConsumeWord32Canonical k) =
 go_fast_end !bs (ConsumeNegWordCanonical k) =
     case tryConsumeNegWord (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected negative int"
-      DecodedToken sz (W# w#)
-        | isWordCanonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#)
+        | isWordCanonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
         | otherwise             -> return $! SlowFail bs "non-canonical negative int"
 
 go_fast_end !bs (ConsumeIntCanonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected int"
-      DecodedToken sz (I# n#)
-        | isIntCanonical sz n# -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz n@(I# n#)
+        | isIntCanonical sz n  -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
         | otherwise            -> return $! SlowFail bs "non-canonical int"
 
 go_fast_end !bs (ConsumeInt8Canonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected int8"
-      DecodedToken sz (I# n#) ->
+      DecodedToken sz n@(I# n#) ->
         case (n# ># 0x7f#) `orI#` (n# <# -0x80#) of
-          0# | isIntCanonical sz n# -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
+          0# | isIntCanonical sz n  -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
              | otherwise            -> return $! SlowFail bs "non-canonical int8"
           _                         -> return $! SlowFail bs "expected int8"
 
 go_fast_end !bs (ConsumeInt16Canonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected int16"
-      DecodedToken sz (I# n#) ->
+      DecodedToken sz n@(I# n#) ->
         case (n# ># 0x7fff#) `orI#` (n# <# -0x8000#) of
-          0# | isIntCanonical sz n# -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
+          0# | isIntCanonical sz n  -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
              | otherwise            -> return $! SlowFail bs "non-canonical int16"
           _                         -> return $! SlowFail bs "expected int16"
 
 go_fast_end !bs (ConsumeInt32Canonical k) =
     case tryConsumeInt (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected int32"
-      DecodedToken sz (I# n#) ->
+      DecodedToken sz n@(I# n#) ->
         case n_out_of_range n# of
-          0# | isIntCanonical sz n# -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
+          0# | isIntCanonical sz n  -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
              | otherwise            -> return $! SlowFail bs "non-canonical int32"
           _                         -> return $! SlowFail bs "expected int32"
   where
@@ -931,24 +936,24 @@ go_fast_end !bs (ConsumeInt32Canonical k) =
 go_fast_end !bs (ConsumeListLenCanonical k) =
     case tryConsumeListLen (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected list len"
-      DecodedToken sz (I# n#)
+      DecodedToken sz n@(I# n#)
           -- List length can't be negative, cast it to Word#.
-        | isWordCanonical sz (int2Word# n#) -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
-        | otherwise                         -> return $! SlowFail bs "non-canonical list len"
+        | isWordCanonical sz (intToWord n) -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
+        | otherwise                        -> return $! SlowFail bs "non-canonical list len"
 
 go_fast_end !bs (ConsumeMapLenCanonical k) =
     case tryConsumeMapLen (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected map len"
-      DecodedToken sz (I# n#)
+      DecodedToken sz n@(I# n#)
           -- Map length can't be negative, cast it to Word#.
-        | isWordCanonical sz (int2Word# n#) -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
-        | otherwise                         -> return $! SlowFail bs "non-canonical map len"
+        | isWordCanonical sz (intToWord n) -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
+        | otherwise                        -> return $! SlowFail bs "non-canonical map len"
 
 go_fast_end !bs (ConsumeTagCanonical k) =
     case tryConsumeTag (BS.unsafeHead bs) bs of
       DecodeFailure           -> return $! SlowFail bs "expected tag"
-      DecodedToken sz (W# w#)
-        | isWordCanonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+      DecodedToken sz w@(W# w#)
+        | isWordCanonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
         | otherwise             -> return $! SlowFail bs "non-canonical tag"
 
 #if defined(ARCH_32bit)
@@ -985,30 +990,30 @@ go_fast_end !bs (ConsumeTag64 k) =
 go_fast_end !bs (ConsumeWord64Canonical k) =
   case tryConsumeWord64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> return $! SlowFail bs "expected word64"
-    DecodedToken sz (W64# w#)
-      | isWord64Canonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+    DecodedToken sz w@(W64# w#)
+      | isWord64Canonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
       | otherwise               -> return $! SlowFail bs "non-canonical word64"
 
 go_fast_end !bs (ConsumeNegWord64Canonical k) =
   case tryConsumeNegWord64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> return $! SlowFail bs "expected negative int"
-    DecodedToken sz (W64# w#)
-      | isWord64Canonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+    DecodedToken sz w@(W64# w#)
+      | isWord64Canonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
       | otherwise               -> return $! SlowFail bs "non-canonical negative int"
 
 go_fast_end !bs (ConsumeInt64Canonical k) =
   case tryConsumeInt64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> return $! SlowFail bs "expected int64"
-    DecodedToken sz (I64# i#)
-      | isInt64Canonical sz i# -> k i# >>= go_fast_end (BS.unsafeDrop sz bs)
+    DecodedToken sz i@(I64# i#)
+      | isInt64Canonical sz i  -> k i# >>= go_fast_end (BS.unsafeDrop sz bs)
       | otherwise              -> return $! SlowFail bs "non-canonical int64"
 
 go_fast_end !bs (ConsumeListLen64Canonical k) =
   case tryConsumeListLen64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> return $! SlowFail bs "expected list len 64"
-    DecodedToken sz (I64# i#)
+    DecodedToken sz i@(I64# i#)
         -- List length can't be negative, cast it to Word64#.
-      | isWord64Canonical sz (int64ToWord64# i#) ->
+      | isWord64Canonical sz (int64ToWord64 i) ->
           k i# >>= go_fast_end (BS.unsafeDrop sz bs)
       | otherwise ->
           return $! SlowFail bs "non-canonical list len 64"
@@ -1016,9 +1021,9 @@ go_fast_end !bs (ConsumeListLen64Canonical k) =
 go_fast_end !bs (ConsumeMapLen64Canonical k) =
   case tryConsumeMapLen64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> return $! SlowFail bs "expected map len 64"
-    DecodedToken sz (I64# i#)
+    DecodedToken sz i@(I64# i#)
         -- Map length can't be negative, cast it to Word64#.
-      | isWord64Canonical sz (int64ToWord64# i#) ->
+      | isWord64Canonical sz (int64ToWord64 i) ->
           k i# >>= go_fast_end (BS.unsafeDrop sz bs)
       | otherwise ->
           return $! SlowFail bs "non-canonical map len 64"
@@ -1026,8 +1031,8 @@ go_fast_end !bs (ConsumeMapLen64Canonical k) =
 go_fast_end !bs (ConsumeTag64Canonical k) =
   case tryConsumeTag64 (BS.unsafeHead bs) bs of
     DecodeFailure             -> return $! SlowFail bs "expected tag64"
-    DecodedToken sz (W64# w#)
-      | isWord64Canonical sz w# -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
+    DecodedToken sz w@(W64# w#)
+      | isWord64Canonical sz w  -> k w# >>= go_fast_end (BS.unsafeDrop sz bs)
       | otherwise               -> return $! SlowFail bs "non-canonical tag64"
 
 #endif
@@ -1537,30 +1542,30 @@ isDoubleCanonical sz bs f
   | otherwise = sz == 9
 
 {-# INLINE isWordCanonical #-}
-isWordCanonical :: Int -> Word# -> Bool
-isWordCanonical sz w#
-  | sz == 2   = isTrue# (w# `gtWord#` 0x17##)
-  | sz == 3   = isTrue# (w# `gtWord#` 0xff##)
-  | sz == 5   = isTrue# (w# `gtWord#` 0xffff##)
-  | sz == 9   = isTrue# (w# `gtWord#` 0xffffffff##)
+isWordCanonical :: Int -> Word -> Bool
+isWordCanonical sz !w
+  | sz == 2   = w > 0x17
+  | sz == 3   = w > 0xff
+  | sz == 5   = w > 0xffff
+  | sz == 9   = w > 0xffffffff
   | otherwise = True
 
 {-# INLINE isIntCanonical #-}
-isIntCanonical :: Int -> Int# -> Bool
-isIntCanonical sz i#
-  | isTrue# (i# <# 0#) = isWordCanonical sz (not# w#)
-  | otherwise          = isWordCanonical sz       w#
+isIntCanonical :: Int -> Int -> Bool
+isIntCanonical sz i
+  | i < 0     = isWordCanonical sz (complement w)
+  | otherwise = isWordCanonical sz       w
   where
-    w# = int2Word# i#
+    w = intToWord i
 
 #if defined(ARCH_32bit)
 {-# INLINE isWord64Canonical #-}
-isWord64Canonical :: Int -> Word64# -> Bool
-isWord64Canonical sz w#
-  | sz == 2   = isTrue# (w# `gtWord64#` wordToWord64# 0x17##)
-  | sz == 3   = isTrue# (w# `gtWord64#` wordToWord64# 0xff##)
-  | sz == 5   = isTrue# (w# `gtWord64#` wordToWord64# 0xffff##)
-  | sz == 9   = isTrue# (w# `gtWord64#` wordToWord64# 0xffffffff##)
+isWord64Canonical :: Int -> Word64 -> Bool
+isWord64Canonical sz w
+  | sz == 2   = w > 0x17)
+  | sz == 3   = w > 0xff)
+  | sz == 5   = w > 0xffff)
+  | sz == 9   = w > 0xffffffff)
   | otherwise = True
 
 {-# INLINE isInt64Canonical #-}
@@ -1611,11 +1616,11 @@ tryConsumeWord hdr !bs = case word8ToWord hdr of
   0x15 -> DecodedToken 1 21
   0x16 -> DecodedToken 1 22
   0x17 -> DecodedToken 1 23
-  0x18 -> DecodedToken 2 (word8ToWord  (eatTailWord8 bs))
-  0x19 -> DecodedToken 3 (word16ToWord (eatTailWord16 bs))
-  0x1a -> DecodedToken 5 (word32ToWord (eatTailWord32 bs))
+  0x18 -> DecodedToken 2 $! word8ToWord  (eatTailWord8 bs)
+  0x19 -> DecodedToken 3 $! word16ToWord (eatTailWord16 bs)
+  0x1a -> DecodedToken 5 $! word32ToWord (eatTailWord32 bs)
 #if defined(ARCH_64bit)
-  0x1b -> DecodedToken 9 (word64ToWord (eatTailWord64 bs))
+  0x1b -> DecodedToken 9 $! word64ToWord (eatTailWord64 bs)
 #else
   0x1b -> case word64ToWord (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 n
@@ -1652,11 +1657,11 @@ tryConsumeNegWord hdr !bs = case word8ToWord hdr of
   0x35 -> DecodedToken 1 21
   0x36 -> DecodedToken 1 22
   0x37 -> DecodedToken 1 23
-  0x38 -> DecodedToken 2 (word8ToWord  (eatTailWord8 bs))
-  0x39 -> DecodedToken 3 (word16ToWord (eatTailWord16 bs))
-  0x3a -> DecodedToken 5 (word32ToWord (eatTailWord32 bs))
+  0x38 -> DecodedToken 2 $! (word8ToWord  (eatTailWord8 bs))
+  0x39 -> DecodedToken 3 $! (word16ToWord (eatTailWord16 bs))
+  0x3a -> DecodedToken 5 $! (word32ToWord (eatTailWord32 bs))
 #if defined(ARCH_64bit)
-  0x3b -> DecodedToken 9 (word64ToWord (eatTailWord64 bs))
+  0x3b -> DecodedToken 9 $! (word64ToWord (eatTailWord64 bs))
 #else
   0x3b -> case word64ToWord (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 n
@@ -1693,10 +1698,10 @@ tryConsumeInt hdr !bs = case word8ToWord hdr of
   0x15 -> DecodedToken 1 21
   0x16 -> DecodedToken 1 22
   0x17 -> DecodedToken 1 23
-  0x18 -> DecodedToken 2 (word8ToInt  (eatTailWord8 bs))
-  0x19 -> DecodedToken 3 (word16ToInt (eatTailWord16 bs))
+  0x18 -> DecodedToken 2 $! (word8ToInt  (eatTailWord8 bs))
+  0x19 -> DecodedToken 3 $! (word16ToInt (eatTailWord16 bs))
 #if defined(ARCH_64bit)
-  0x1a -> DecodedToken 5 (word32ToInt (eatTailWord32 bs))
+  0x1a -> DecodedToken 5 $! (word32ToInt (eatTailWord32 bs))
 #else
   0x1a -> case word32ToInt (eatTailWord32 bs) of
             Just n  -> DecodedToken 5 n
@@ -1731,10 +1736,10 @@ tryConsumeInt hdr !bs = case word8ToWord hdr of
   0x35 -> DecodedToken 1 (-22)
   0x36 -> DecodedToken 1 (-23)
   0x37 -> DecodedToken 1 (-24)
-  0x38 -> DecodedToken 2 (-1 - word8ToInt  (eatTailWord8 bs))
-  0x39 -> DecodedToken 3 (-1 - word16ToInt (eatTailWord16 bs))
+  0x38 -> DecodedToken 2 $! (-1 - word8ToInt  (eatTailWord8 bs))
+  0x39 -> DecodedToken 3 $! (-1 - word16ToInt (eatTailWord16 bs))
 #if defined(ARCH_64bit)
-  0x3a -> DecodedToken 5 (-1 - word32ToInt (eatTailWord32 bs))
+  0x3a -> DecodedToken 5 $! (-1 - word32ToInt (eatTailWord32 bs))
 #else
   0x3a -> case word32ToInt (eatTailWord32 bs) of
             Just n  -> DecodedToken 5 (-1 - n)
@@ -1776,21 +1781,21 @@ tryConsumeInteger hdr !bs = case word8ToWord hdr of
   0x16 -> DecodedToken 1 (BigIntToken True 22)
   0x17 -> DecodedToken 1 (BigIntToken True 23)
 
-  0x18 -> let !w@(W8# w#) = eatTailWord8 bs
+  0x18 -> let !w = eatTailWord8 bs
               sz = 2
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (toInteger w))
-  0x19 -> let !w@(W16# w#) = eatTailWord16 bs
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word8ToWord w))    $! toInteger w)
+  0x19 -> let !w = eatTailWord16 bs
               sz = 3
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (toInteger w))
-  0x1a -> let !w@(W32# w#) = eatTailWord32 bs
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word16ToWord w))   $! toInteger w)
+  0x1a -> let !w = eatTailWord32 bs
               sz = 5
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (toInteger w))
-  0x1b -> let !w@(W64# w#) = eatTailWord64 bs
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word32ToWord w))   $! toInteger w)
+  0x1b -> let !w = eatTailWord64 bs
               sz = 9
 #if defined(ARCH_32bit)
-          in DecodedToken sz (BigIntToken (isWord64Canonical sz w#) (toInteger w))
+          in DecodedToken sz (BigIntToken (isWord64Canonical sz (word64ToWord w)) $! toInteger w)
 #else
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (toInteger w))
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word64ToWord w))   $! toInteger w)
 #endif
 
   -- Negative integers (type 1)
@@ -1818,21 +1823,21 @@ tryConsumeInteger hdr !bs = case word8ToWord hdr of
   0x35 -> DecodedToken 1 (BigIntToken True (-22))
   0x36 -> DecodedToken 1 (BigIntToken True (-23))
   0x37 -> DecodedToken 1 (BigIntToken True (-24))
-  0x38 -> let !w@(W8# w#) = eatTailWord8 bs
+  0x38 -> let !w = eatTailWord8 bs
               sz = 2
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (-1 - toInteger w))
-  0x39 -> let !w@(W16# w#) = eatTailWord16 bs
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word8ToWord w))    $! (-1 - toInteger w))
+  0x39 -> let !w = eatTailWord16 bs
               sz = 3
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (-1 - toInteger w))
-  0x3a -> let !w@(W32# w#) = eatTailWord32 bs
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word16ToWord w))   $! (-1 - toInteger w))
+  0x3a -> let !w = eatTailWord32 bs
               sz = 5
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (-1 - toInteger w))
-  0x3b -> let !w@(W64# w#) = eatTailWord64 bs
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word32ToWord w))   $! (-1 - toInteger w))
+  0x3b -> let !w = eatTailWord64 bs
               sz = 9
 #if defined(ARCH_32bit)
-          in DecodedToken sz (BigIntToken (isWord64Canonical sz w#) (-1 - toInteger w))
+          in DecodedToken sz (BigIntToken (isWord64Canonical sz (word64ToWord w)) $! (-1 - toInteger w))
 #else
-          in DecodedToken sz (BigIntToken (isWordCanonical sz w#)   (-1 - toInteger w))
+          in DecodedToken sz (BigIntToken (isWordCanonical sz (word64ToWord w))   $! (-1 - toInteger w))
 #endif
 
   0xc2 -> readBigUInt bs
@@ -1984,10 +1989,10 @@ tryConsumeMapLen hdr !bs = case word8ToWord hdr of
   0xb5 -> DecodedToken 1 21
   0xb6 -> DecodedToken 1 22
   0xb7 -> DecodedToken 1 23
-  0xb8 -> DecodedToken 2 (word8ToInt  (eatTailWord8 bs))
-  0xb9 -> DecodedToken 3 (word16ToInt (eatTailWord16 bs))
+  0xb8 -> DecodedToken 2 $! (word8ToInt  (eatTailWord8 bs))
+  0xb9 -> DecodedToken 3 $! (word16ToInt (eatTailWord16 bs))
 #if defined(ARCH_64bit)
-  0xba -> DecodedToken 5 (word32ToInt (eatTailWord32 bs))
+  0xba -> DecodedToken 5 $! (word32ToInt (eatTailWord32 bs))
 #else
   0xba -> case word32ToInt (eatTailWord32 bs) of
             Just n  -> DecodedToken 5 n
@@ -2042,10 +2047,10 @@ tryConsumeListLenOrIndef hdr !bs = case word8ToWord hdr of
   0x95 -> DecodedToken 1 21
   0x96 -> DecodedToken 1 22
   0x97 -> DecodedToken 1 23
-  0x98 -> DecodedToken 2 (word8ToInt  (eatTailWord8 bs))
-  0x99 -> DecodedToken 3 (word16ToInt (eatTailWord16 bs))
+  0x98 -> DecodedToken 2 $! (word8ToInt  (eatTailWord8 bs))
+  0x99 -> DecodedToken 3 $! (word16ToInt (eatTailWord16 bs))
 #if defined(ARCH_64bit)
-  0x9a -> DecodedToken 5 (word32ToInt (eatTailWord32 bs))
+  0x9a -> DecodedToken 5 $! (word32ToInt (eatTailWord32 bs))
 #else
   0x9a -> case word32ToInt (eatTailWord32 bs) of
             Just n  -> DecodedToken 5 n
@@ -2087,10 +2092,10 @@ tryConsumeMapLenOrIndef hdr !bs = case word8ToWord hdr of
   0xb5 -> DecodedToken 1 21
   0xb6 -> DecodedToken 1 22
   0xb7 -> DecodedToken 1 23
-  0xb8 -> DecodedToken 2 (word8ToInt  (eatTailWord8 bs))
-  0xb9 -> DecodedToken 3 (word16ToInt (eatTailWord16 bs))
+  0xb8 -> DecodedToken 2 $! (word8ToInt  (eatTailWord8 bs))
+  0xb9 -> DecodedToken 3 $! (word16ToInt (eatTailWord16 bs))
 #if defined(ARCH_64bit)
-  0xba -> DecodedToken 5 (word32ToInt (eatTailWord32 bs))
+  0xba -> DecodedToken 5 $! (word32ToInt (eatTailWord32 bs))
 #else
   0xba -> case word32ToInt (eatTailWord32 bs) of
             Just n  -> DecodedToken 5 n
@@ -2175,11 +2180,11 @@ tryConsumeTag hdr !bs = case word8ToWord hdr of
   0xd5 -> DecodedToken 1 21
   0xd6 -> DecodedToken 1 22
   0xd7 -> DecodedToken 1 23
-  0xd8 -> DecodedToken 2 (word8ToWord  (eatTailWord8 bs))
-  0xd9 -> DecodedToken 3 (word16ToWord (eatTailWord16 bs))
-  0xda -> DecodedToken 5 (word32ToWord (eatTailWord32 bs))
+  0xd8 -> DecodedToken 2 $! (word8ToWord  (eatTailWord8 bs))
+  0xd9 -> DecodedToken 3 $! (word16ToWord (eatTailWord16 bs))
+  0xda -> DecodedToken 5 $! (word32ToWord (eatTailWord32 bs))
 #if defined(ARCH_64bit)
-  0xdb -> DecodedToken 9 (word64ToWord (eatTailWord64 bs))
+  0xdb -> DecodedToken 9 $! (word64ToWord (eatTailWord64 bs))
 #else
   0xdb -> case word64ToWord (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 n
@@ -2219,10 +2224,10 @@ tryConsumeWord64 hdr !bs = case word8ToWord hdr of
   0x15 -> DecodedToken 1 21
   0x16 -> DecodedToken 1 22
   0x17 -> DecodedToken 1 23
-  0x18 -> DecodedToken 2 (word8ToWord64  (eatTailWord8  bs))
-  0x19 -> DecodedToken 3 (word16ToWord64 (eatTailWord16 bs))
-  0x1a -> DecodedToken 5 (word32ToWord64 (eatTailWord32 bs))
-  0x1b -> DecodedToken 9                 (eatTailWord64 bs)
+  0x18 -> DecodedToken 2 $! (word8ToWord64  (eatTailWord8  bs))
+  0x19 -> DecodedToken 3 $! (word16ToWord64 (eatTailWord16 bs))
+  0x1a -> DecodedToken 5 $! (word32ToWord64 (eatTailWord32 bs))
+  0x1b -> DecodedToken 9 $!                 (eatTailWord64 bs)
   _    -> DecodeFailure
 {-# INLINE tryConsumeWord64 #-}
 
@@ -2253,10 +2258,10 @@ tryConsumeNegWord64 hdr !bs = case word8ToWord hdr of
   0x35 -> DecodedToken 1 21
   0x36 -> DecodedToken 1 22
   0x37 -> DecodedToken 1 23
-  0x38 -> DecodedToken 2 (word8ToWord64  (eatTailWord8  bs))
-  0x39 -> DecodedToken 3 (word16ToWord64 (eatTailWord16 bs))
-  0x3a -> DecodedToken 5 (word32ToWord64 (eatTailWord32 bs))
-  0x3b -> DecodedToken 9                 (eatTailWord64 bs)
+  0x38 -> DecodedToken 2 $! (word8ToWord64  (eatTailWord8  bs))
+  0x39 -> DecodedToken 3 $! (word16ToWord64 (eatTailWord16 bs))
+  0x3a -> DecodedToken 5 $! (word32ToWord64 (eatTailWord32 bs))
+  0x3b -> DecodedToken 9 $!                 (eatTailWord64 bs)
   _    -> DecodeFailure
 {-# INLINE tryConsumeNegWord64 #-}
 
@@ -2287,9 +2292,9 @@ tryConsumeInt64 hdr !bs = case word8ToWord hdr of
   0x15 -> DecodedToken 1 21
   0x16 -> DecodedToken 1 22
   0x17 -> DecodedToken 1 23
-  0x18 -> DecodedToken 2 (word8ToInt64  (eatTailWord8  bs))
-  0x19 -> DecodedToken 3 (word16ToInt64 (eatTailWord16 bs))
-  0x1a -> DecodedToken 5 (word32ToInt64 (eatTailWord32 bs))
+  0x18 -> DecodedToken 2 $! (word8ToInt64  (eatTailWord8  bs))
+  0x19 -> DecodedToken 3 $! (word16ToInt64 (eatTailWord16 bs))
+  0x1a -> DecodedToken 5 $! (word32ToInt64 (eatTailWord32 bs))
   0x1b -> case word64ToInt64 (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 n
             Nothing -> DecodeFailure
@@ -2319,9 +2324,9 @@ tryConsumeInt64 hdr !bs = case word8ToWord hdr of
   0x35 -> DecodedToken 1 (-22)
   0x36 -> DecodedToken 1 (-23)
   0x37 -> DecodedToken 1 (-24)
-  0x38 -> DecodedToken 2 (-1 - word8ToInt64  (eatTailWord8  bs))
-  0x39 -> DecodedToken 3 (-1 - word16ToInt64 (eatTailWord16 bs))
-  0x3a -> DecodedToken 5 (-1 - word32ToInt64 (eatTailWord32 bs))
+  0x38 -> DecodedToken 2 $! (-1 - word8ToInt64  (eatTailWord8  bs))
+  0x39 -> DecodedToken 3 $! (-1 - word16ToInt64 (eatTailWord16 bs))
+  0x3a -> DecodedToken 5 $! (-1 - word32ToInt64 (eatTailWord32 bs))
   0x3b -> case word64ToInt64 (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 (-1 - n)
             Nothing -> DecodeFailure
@@ -2355,9 +2360,9 @@ tryConsumeListLen64 hdr !bs = case word8ToWord hdr of
   0x95 -> DecodedToken 1 21
   0x96 -> DecodedToken 1 22
   0x97 -> DecodedToken 1 23
-  0x98 -> DecodedToken 2 (word8ToInt64  (eatTailWord8  bs))
-  0x99 -> DecodedToken 3 (word16ToInt64 (eatTailWord16 bs))
-  0x9a -> DecodedToken 5 (word32ToInt64 (eatTailWord32 bs))
+  0x98 -> DecodedToken 2 $! (word8ToInt64  (eatTailWord8  bs))
+  0x99 -> DecodedToken 3 $! (word16ToInt64 (eatTailWord16 bs))
+  0x9a -> DecodedToken 5 $! (word32ToInt64 (eatTailWord32 bs))
   0x9b -> case word64ToInt64 (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 n
             Nothing -> DecodeFailure
@@ -2391,9 +2396,9 @@ tryConsumeMapLen64 hdr !bs = case word8ToWord hdr of
   0xb5 -> DecodedToken 1 21
   0xb6 -> DecodedToken 1 22
   0xb7 -> DecodedToken 1 23
-  0xb8 -> DecodedToken 2 (word8ToInt64  (eatTailWord8  bs))
-  0xb9 -> DecodedToken 3 (word16ToInt64 (eatTailWord16 bs))
-  0xba -> DecodedToken 5 (word32ToInt64 (eatTailWord32 bs))
+  0xb8 -> DecodedToken 2 $! (word8ToInt64  (eatTailWord8  bs))
+  0xb9 -> DecodedToken 3 $! (word16ToInt64 (eatTailWord16 bs))
+  0xba -> DecodedToken 5 $! (word32ToInt64 (eatTailWord32 bs))
   0xbb -> case word64ToInt64 (eatTailWord64 bs) of
             Just n  -> DecodedToken 9 n
             Nothing -> DecodeFailure
@@ -2427,10 +2432,10 @@ tryConsumeTag64 hdr !bs = case word8ToWord hdr of
   0xd5 -> DecodedToken 1 21
   0xd6 -> DecodedToken 1 22
   0xd7 -> DecodedToken 1 23
-  0xd8 -> DecodedToken 2 (word8ToWord64  (eatTailWord8  bs))
-  0xd9 -> DecodedToken 3 (word16ToWord64 (eatTailWord16 bs))
-  0xda -> DecodedToken 5 (word32ToWord64 (eatTailWord32 bs))
-  0xdb -> DecodedToken 9                 (eatTailWord64 bs)
+  0xd8 -> DecodedToken 2 $! (word8ToWord64  (eatTailWord8  bs))
+  0xd9 -> DecodedToken 3 $! (word16ToWord64 (eatTailWord16 bs))
+  0xda -> DecodedToken 5 $! (word32ToWord64 (eatTailWord32 bs))
+  0xdb -> DecodedToken 9 $!                 (eatTailWord64 bs)
   _    -> DecodeFailure
 {-# INLINE tryConsumeTag64 #-}
 #endif
@@ -2438,17 +2443,17 @@ tryConsumeTag64 hdr !bs = case word8ToWord hdr of
 {-# INLINE tryConsumeFloat #-}
 tryConsumeFloat :: Word8 -> ByteString -> DecodedToken Float
 tryConsumeFloat hdr !bs = case word8ToWord hdr of
-  0xf9 -> DecodedToken 3 (wordToFloat16 (eatTailWord16 bs))
-  0xfa -> DecodedToken 5 (wordToFloat32 (eatTailWord32 bs))
+  0xf9 -> DecodedToken 3 $! (wordToFloat16 (eatTailWord16 bs))
+  0xfa -> DecodedToken 5 $! (wordToFloat32 (eatTailWord32 bs))
   _    -> DecodeFailure
 
 
 {-# INLINE tryConsumeDouble #-}
 tryConsumeDouble :: Word8 -> ByteString -> DecodedToken Double
 tryConsumeDouble hdr !bs = case word8ToWord hdr of
-  0xf9 -> DecodedToken 3 (float2Double $ wordToFloat16 (eatTailWord16 bs))
-  0xfa -> DecodedToken 5 (float2Double $ wordToFloat32 (eatTailWord32 bs))
-  0xfb -> DecodedToken 9                (wordToFloat64 (eatTailWord64 bs))
+  0xf9 -> DecodedToken 3 $! (float2Double $ wordToFloat16 (eatTailWord16 bs))
+  0xfa -> DecodedToken 5 $! (float2Double $ wordToFloat32 (eatTailWord32 bs))
+  0xfb -> DecodedToken 9 $!                (wordToFloat64 (eatTailWord64 bs))
   _    -> DecodeFailure
 
 
@@ -2489,7 +2494,7 @@ tryConsumeSimple hdr !bs = case word8ToWord hdr of
   0xf5 -> DecodedToken 1 21
   0xf6 -> DecodedToken 1 22
   0xf7 -> DecodedToken 1 23
-  0xf8 -> DecodedToken 2 (word8ToWord (eatTailWord8 bs))
+  0xf8 -> DecodedToken 2 $! (word8ToWord (eatTailWord8 bs))
   _    -> DecodeFailure
 
 
@@ -2551,8 +2556,8 @@ readBytes8 bs
   = DecodedToken hdrsz $ TooLong lengthCanonical n
   where
     hdrsz           = 2
-    !n@(I# n#)      = word8ToInt (eatTailWord8 bs)
-    lengthCanonical = isIntCanonical hdrsz n#
+    !n              = word8ToInt (eatTailWord8 bs)
+    lengthCanonical = isIntCanonical hdrsz n
 
 readBytes16 bs
   | n <= BS.length bs - hdrsz
@@ -2564,21 +2569,21 @@ readBytes16 bs
   = DecodedToken hdrsz $ TooLong lengthCanonical n
   where
     hdrsz           = 3
-    !n@(I# n#)      = word16ToInt (eatTailWord16 bs)
-    lengthCanonical = isIntCanonical hdrsz n#
+    !n              = word16ToInt (eatTailWord16 bs)
+    lengthCanonical = isIntCanonical hdrsz n
 
 readBytes32 bs = case word32ToInt (eatTailWord32 bs) of
 #if defined(ARCH_32bit)
-    Just n@(I# n#)
+    Just n
 #else
-    n@(I# n#)
+    n
 #endif
       | n <= BS.length bs - hdrsz
-                  -> DecodedToken (n+hdrsz) $ Fits (isIntCanonical hdrsz n#) $
+                  -> DecodedToken (n+hdrsz) $ Fits (isIntCanonical hdrsz n) $
                        BS.unsafeTake n (BS.unsafeDrop hdrsz bs)
 
       -- if n > bound then slow path, multi-chunk
-      | otherwise -> DecodedToken hdrsz $ TooLong (isIntCanonical hdrsz n#) n
+      | otherwise -> DecodedToken hdrsz $ TooLong (isIntCanonical hdrsz n) n
 
 #if defined(ARCH_32bit)
     Nothing       -> DecodeFailure
@@ -2587,13 +2592,13 @@ readBytes32 bs = case word32ToInt (eatTailWord32 bs) of
     hdrsz = 5
 
 readBytes64 bs = case word64ToInt (eatTailWord64 bs) of
-    Just n@(I# n#)
+    Just n
       | n <= BS.length bs - hdrsz
-                  -> DecodedToken (n+hdrsz) $ Fits (isIntCanonical hdrsz n#) $
+                  -> DecodedToken (n+hdrsz) $ Fits (isIntCanonical hdrsz n) $
                             BS.unsafeTake n (BS.unsafeDrop hdrsz bs)
 
       -- if n > bound then slow path, multi-chunk
-      | otherwise -> DecodedToken hdrsz $ TooLong (isIntCanonical hdrsz n#) n
+      | otherwise -> DecodedToken hdrsz $ TooLong (isIntCanonical hdrsz n) n
 
     Nothing       -> DecodeFailure
   where

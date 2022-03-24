@@ -51,6 +51,7 @@ import           Data.Ord
 #if MIN_VERSION_base(4,8,0)
 import           Numeric.Natural
 import           Data.Functor.Identity
+import           Data.Void                           (Void, absurd)
 #endif
 
 #if MIN_VERSION_base(4,9,0)
@@ -70,10 +71,12 @@ import qualified Data.ByteString.Lazy                as BS.Lazy
 import qualified Data.Map                            as Map
 import qualified Data.Sequence                       as Sequence
 import qualified Data.Set                            as Set
+import qualified Data.Strict                         as Strict
 import qualified Data.IntSet                         as IntSet
 import qualified Data.IntMap                         as IntMap
 import qualified Data.HashSet                        as HashSet
 import qualified Data.HashMap.Strict                 as HashMap
+import qualified Data.These                          as These
 import qualified Data.Tree                           as Tree
 import qualified Data.Primitive.ByteArray            as Prim
 import qualified Data.Vector                         as Vector
@@ -99,6 +102,9 @@ import           System.Exit                         (ExitCode(..))
 
 import           Prelude hiding (decodeFloat, encodeFloat, foldr)
 import qualified Prelude
+#if MIN_VERSION_base(4,16,0)
+import           GHC.Exts (Levity(..))
+#endif
 #if MIN_VERSION_base(4,10,0)
 import           Type.Reflection
 import           Type.Reflection.Unsafe
@@ -203,6 +209,13 @@ instance Serialise a => Serialise (NonEmpty.NonEmpty a) where
 
 --------------------------------------------------------------------------------
 -- Primitive and integral instances
+
+#if MIN_VERSION_base(4,8,0)
+-- | @since 0.2.4.0
+instance Serialise Void where
+    encode = absurd
+    decode = fail "tried to decode void"
+#endif
 
 -- | @since 0.2.0.0
 instance Serialise () where
@@ -530,10 +543,12 @@ instance Serialise a => Serialise (Semigroup.Last a) where
   encode = encode . Semigroup.getLast
   decode = fmap Semigroup.Last decode
 
+#if !MIN_VERSION_base(4,16,0)
 -- | @since 0.2.0.0
 instance Serialise a => Serialise (Semigroup.Option a) where
   encode = encode . Semigroup.getOption
   decode = fmap Semigroup.Option decode
+#endif
 
 instance Serialise a => Serialise (Semigroup.WrappedMonoid a) where
   encode = encode . Semigroup.unwrapMonoid
@@ -850,6 +865,44 @@ instance (Serialise a, Serialise b) => Serialise (Either a b) where
                           return (Right x)
                   _ -> fail "unknown tag"
 
+-- | @since 0.2.4.0
+instance (Serialise a, Serialise b) => Serialise (These.These a b) where
+    encode (These.This x) = encodeListLen 2 <> encodeWord 0 <> encode x
+    encode (These.That x) = encodeListLen 2 <> encodeWord 1 <> encode x
+    encode (These.These x y) = encodeListLen 3 <> encodeWord 2 <> encode x <> encode y
+
+    decode = do n <- decodeListLen
+                t <- decodeWord
+                case (t, n) of
+                  (0, 2) -> do !x <- decode
+                               return (These.This x)
+                  (1, 2) -> do !x <- decode
+                               return (These.That x)
+                  (2, 3) -> do !x <- decode
+                               !y <- decode
+                               return (These.These x y)
+                  _ -> fail "unknown tag"
+
+-- | @since 0.2.4.0
+instance (Serialise a, Serialise b) => Serialise (Strict.Pair a b) where
+    encode = encode . Strict.toLazy
+    decode = Strict.toStrict <$> decode
+
+-- | @since 0.2.4.0
+instance Serialise a => Serialise (Strict.Maybe a) where
+    encode = encode . Strict.toLazy
+    decode = Strict.toStrict <$> decode
+
+-- | @since 0.2.4.0
+instance (Serialise a, Serialise b) => Serialise (Strict.Either a b) where
+    encode = encode . Strict.toLazy
+    decode = Strict.toStrict <$> decode
+
+-- | @since 0.2.4.0
+instance (Serialise a, Serialise b) => Serialise (Strict.These a b) where
+    encode = encode . Strict.toLazy
+    decode = Strict.toStrict <$> decode
+
 
 --------------------------------------------------------------------------------
 -- Container instances
@@ -1136,6 +1189,15 @@ instance Serialise VecElem where
     decodeListLenOf 1
     toEnum . fromIntegral <$> decodeWord
 
+#if MIN_VERSION_base(4,16,0)
+-- | @since 0.2.6.0
+instance Serialise Levity where
+  encode lev = encodeListLen 1 <> encodeWord (fromIntegral $ fromEnum lev)
+  decode = do
+    decodeListLenOf 1
+    toEnum . fromIntegral <$> decodeWord
+#endif
+
 -- | @since 0.2.0.0
 instance Serialise RuntimeRep where
   encode rr =
@@ -1143,8 +1205,12 @@ instance Serialise RuntimeRep where
       VecRep a b    -> encodeListLen 3 <> encodeWord 0 <> encode a <> encode b
       TupleRep reps -> encodeListLen 2 <> encodeWord 1 <> encode reps
       SumRep reps   -> encodeListLen 2 <> encodeWord 2 <> encode reps
+#if MIN_VERSION_base(4,16,0)
+      BoxedRep lev  -> encodeListLen 2 <> encodeWord 3 <> encode lev
+#else
       LiftedRep     -> encodeListLen 1 <> encodeWord 3
       UnliftedRep   -> encodeListLen 1 <> encodeWord 4
+#endif
       IntRep        -> encodeListLen 1 <> encodeWord 5
       WordRep       -> encodeListLen 1 <> encodeWord 6
       Int64Rep      -> encodeListLen 1 <> encodeWord 7
@@ -1152,6 +1218,16 @@ instance Serialise RuntimeRep where
       AddrRep       -> encodeListLen 1 <> encodeWord 9
       FloatRep      -> encodeListLen 1 <> encodeWord 10
       DoubleRep     -> encodeListLen 1 <> encodeWord 11
+#if MIN_VERSION_base(4,13,0)
+      Int8Rep       -> encodeListLen 1 <> encodeWord 12
+      Int16Rep      -> encodeListLen 1 <> encodeWord 13
+      Word8Rep      -> encodeListLen 1 <> encodeWord 14
+      Word16Rep     -> encodeListLen 1 <> encodeWord 15
+#endif
+#if MIN_VERSION_base(4,14,0)
+      Int32Rep      -> encodeListLen 1 <> encodeWord 16
+      Word32Rep     -> encodeListLen 1 <> encodeWord 17
+#endif
 
   decode = do
     len <- decodeListLen
@@ -1160,8 +1236,12 @@ instance Serialise RuntimeRep where
       0  | len == 3 -> VecRep <$> decode <*> decode
       1  | len == 2 -> TupleRep <$> decode
       2  | len == 2 -> SumRep <$> decode
+#if MIN_VERSION_base(4,16,0)
+      3  | len == 2 -> BoxedRep <$> decode
+#else
       3  | len == 1 -> pure LiftedRep
       4  | len == 1 -> pure UnliftedRep
+#endif
       5  | len == 1 -> pure IntRep
       6  | len == 1 -> pure WordRep
       7  | len == 1 -> pure Int64Rep
@@ -1169,6 +1249,16 @@ instance Serialise RuntimeRep where
       9  | len == 1 -> pure AddrRep
       10 | len == 1 -> pure FloatRep
       11 | len == 1 -> pure DoubleRep
+#if MIN_VERSION_base(4,13,0)
+      12 | len == 1 -> pure Int8Rep
+      13 | len == 1 -> pure Int16Rep
+      14 | len == 1 -> pure Word8Rep
+      15 | len == 1 -> pure Word16Rep
+#endif
+#if MIN_VERSION_base(4,14,0)
+      16 | len == 1 -> pure Int32Rep
+      17 | len == 1 -> pure Word32Rep
+#endif
       _             -> fail "Data.Serialise.Binary.CBOR.getRuntimeRep: invalid tag"
 
 -- | @since 0.2.0.0
@@ -1201,12 +1291,18 @@ instance Serialise TypeLitSort where
    <> case n of
         TypeLitSymbol -> encodeWord 0
         TypeLitNat    -> encodeWord 1
+#if MIN_VERSION_base(4,16,0)
+        TypeLitChar   -> encodeWord 2
+#endif
   decode = do
     decodeListLenOf 1
     tag <- decodeWord
     case tag of
       0 -> pure TypeLitSymbol
       1 -> pure TypeLitNat
+#if MIN_VERSION_base(4,16,0)
+      2 -> pure TypeLitChar
+#endif
       _ -> fail "Data.Serialise.Binary.CBOR.putTypeLitSort: invalid tag"
 
 decodeSomeTypeRep :: Decoder s SomeTypeRep
@@ -1216,11 +1312,11 @@ decodeSomeTypeRep = do
     case tag of
       0 | len == 1 ->
               return $! SomeTypeRep (typeRep :: TypeRep Type)
-      1 | len == 2 -> do
+      1 | len == 3 -> do
               !con <- decode
               !ks <- decode
               return $! SomeTypeRep $ mkTrCon con ks
-      2 | len == 2 -> do
+      2 | len == 3 -> do
               SomeTypeRep f <- decodeSomeTypeRep
               SomeTypeRep x <- decodeSomeTypeRep
               case typeRepKind f of
@@ -1239,7 +1335,7 @@ decodeSomeTypeRep = do
                      [ "Applied type: " ++ show f
                      , "To argument:  " ++ show x
                      ]
-      3 | len == 2 -> do
+      3 | len == 3 -> do
               SomeTypeRep arg <- decodeSomeTypeRep
               SomeTypeRep res <- decodeSomeTypeRep
               case typeRepKind arg `eqTypeRep` (typeRep :: TypeRep Type) of
@@ -1248,7 +1344,9 @@ decodeSomeTypeRep = do
                       Just HRefl -> return $! SomeTypeRep $ Fun arg res
                       Nothing -> failure "Kind mismatch" []
                 Nothing -> failure "Kind mismatch" []
-      _ -> failure "unexpected tag" []
+      _ -> failure "unexpected tag"
+           [ "Tag: " ++ show tag
+           , "Len: " ++ show len ]
   where
     failure description info =
         fail $ unlines $ [ "Codec.CBOR.Class.decodeSomeTypeRep: "++description ]
@@ -1274,7 +1372,6 @@ encodeTypeRep (Fun arg res)
  <> encodeWord 3
  <> encodeTypeRep arg
  <> encodeTypeRep res
-encodeTypeRep _ = error "Codec.CBOR.Class.encodeTypeRep: Impossible"
 
 -- | @since 0.2.0.0
 instance Typeable a => Serialise (TypeRep (a :: k)) where
