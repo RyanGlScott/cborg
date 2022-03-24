@@ -50,7 +50,7 @@ module Codec.CBOR.Encoding
   , encodeFloat              -- :: Float -> Encoding
   , encodeDouble             -- :: Double -> Encoding
   , encodePreEncoded         -- :: B.ByteString -> Encoding
-  
+
   -- ** Embedded CBOR data
   -- $embedded-cbor
   , encodeEmbeddedCBOR
@@ -385,7 +385,7 @@ encodePreEncoded = Encoding . TkEncoded
 -- embedded byte string as a data item encoded in CBOR format.
 --
 -- This can also be used as an encoding trick to provide a length prefix for
--- the encoed bytes of a CBOR term.
+-- the encoded bytes of a CBOR term.
 --
 -- See RFC 7049 section 2.4.4.1 .
 
