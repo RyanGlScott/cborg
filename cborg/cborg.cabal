@@ -132,6 +132,7 @@ test-suite tests
     Tests.Boundary
     Tests.ByteOffset
     Tests.Canonical
+    Tests.Embedded
     Tests.PreEncoded
     Tests.Regress
     Tests.Regress.Issue160
