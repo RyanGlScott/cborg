@@ -379,7 +379,7 @@ encodePreEncoded = Encoding . TkEncoded
 -- Encoded CBOR Data Item, Tag 24, RFC 7049 section 2.4.4.1
 
 -- $embedded-cbor
--- | Sometimes it is beneficial to carry an embedded CBOR data item that
+-- Sometimes it is beneficial to carry an embedded CBOR data item that
 -- is not meant to be decoded immediately at the time the enclosing data
 -- item is being parsed.  Tag 24 (CBOR data item) can be used to tag the
 -- embedded byte string as a data item encoded in CBOR format.
