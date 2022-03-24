@@ -153,6 +153,15 @@ convFlatTerm (Enc.TkFloat64  f  ts) = TkFloat64   f : convFlatTerm ts
 convFlatTerm (Enc.TkBreak       ts) = TkBreak       : convFlatTerm ts
 convFlatTerm (Enc.TkEncoded  bs ts) = decodePreEncoded bs
                                                    ++ convFlatTerm ts
+{-
+convFlatTerm (Enc.TkEmbedded sz e ts)
+                                    = -- TODO RGS: There needs to be *something*
+                                      -- that goes here to record the size,
+                                      -- but I'm not sure what that should be.
+                                      ???
+                                                    : convFlatTerm e
+                                                   ++ convFlatTerm ts
+-}
 convFlatTerm  Enc.TkEnd             = []
 
 --------------------------------------------------------------------------------
@@ -324,6 +333,12 @@ fromFlatTerm decoder ft =
         | n <= maxInt                        = k (unI# (fromIntegral n)) >>= go ts
     go (TkMapLen  n : ts) (ConsumeMapLen  k)
         | n <= maxInt                        = k (unI# (fromIntegral n)) >>= go ts
+    {-
+    -- TODO RGS: There needs to be *something* that goes here to record the
+    -- size, but I'm not sure what that should be.
+    go (TkEmbeddedLen n : ts) (ConsumeBytesLen k)
+        | n <= maxInt                        = k (unI# (fromIntegral n)) >>= go ts
+    -}
     go (TkTag     n : ts) (ConsumeTag     k)
         | n <= maxWord                       = k (unW# (fromIntegral n)) >>= go ts
 
@@ -482,6 +497,7 @@ fromFlatTerm decoder ft =
 
     go ts (ConsumeListLen _) = unexpected "decodeListLen" ts
     go ts (ConsumeMapLen  _) = unexpected "decodeMapLen"  ts
+    go ts (ConsumeBytesLen _) = unexpected "decodeBytesLen" ts
     go ts (ConsumeTag     _) = unexpected "decodeTag"     ts
 
     go ts (ConsumeWordCanonical    _) = unexpected "decodeWordCanonical"    ts

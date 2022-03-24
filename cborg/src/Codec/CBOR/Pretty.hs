@@ -215,6 +215,8 @@ pprint = do
     TkFloat64  _   _         -> termFailure term
     TkEncoded  _   TkEnd     -> ppTkEncoded
     TkEncoded  _   _         -> termFailure term
+    TkEmbedded sz _ TkEnd    -> ppTkEmbedded sz
+    TkEmbedded _  _ _        -> termFailure term
     TkEnd                    -> str "# End of input"
  where
    termFailure t = fail $ unwords ["pprint: Unexpected token:", show t]
@@ -254,6 +256,9 @@ ppTkStringBegin = str "# text(*)" >> inc 3 >> indef pprint
 
 ppTkEncoded    ::               PP ()
 ppTkEncoded = str "# pre-encoded CBOR term"
+
+ppTkEmbedded   :: Word -> PP ()
+ppTkEmbedded sz = str "# embedded CBOR term" >> parens (shown sz)
 
 ppTkListLen    :: Word       -> PP ()
 ppTkListLen n = do
@@ -362,6 +367,7 @@ unconsToken (TkFloat16 f16 tks) = Just (TkFloat16 f16 TkEnd,tks)
 unconsToken (TkFloat32 f32 tks) = Just (TkFloat32 f32 TkEnd,tks)
 unconsToken (TkFloat64 f64 tks) = Just (TkFloat64 f64 TkEnd,tks)
 unconsToken (TkEncoded bs  tks) = Just (TkEncoded bs  TkEnd,tks)
+unconsToken (TkEmbedded sz e tks) = Just (TkEmbedded sz e TkEnd,tks)
 unconsToken (TkBreak       tks) = Just (TkBreak       TkEnd,tks)
 
 hexRep :: Tokens -> PP ()
