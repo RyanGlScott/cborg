@@ -189,6 +189,11 @@ benchmark micro
     -Wall -rtsopts -fno-cse -fno-ignore-asserts -fno-warn-orphans
 
   other-modules:
+    Embedded
+    Embedded.Roundtrip.EmbeddedCBOR
+    Embedded.Roundtrip.Normal
+    Embedded.Roundtrip.SerialisedCBOR
+
     Micro
     Micro.Types
     Micro.Load
